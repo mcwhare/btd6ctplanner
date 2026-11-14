@@ -2,13 +2,19 @@
 // For production, point BASE at your own proxy or the API directly if CORS allows it.
 import { LAYOUT } from "./layout.js";
 
-const BASE = (import.meta.env?.VITE_NK_BASE) ?? "/nk";
+const DIRECT_BASE = "https://data.ninjakiwi.com";
+const BASE = (import.meta.env?.VITE_NK_BASE) ?? (import.meta.env?.DEV ? "/nk" : DIRECT_BASE);
 
 // The API returns absolute URLs for sub-resources (e.g. event.tiles); route them through BASE.
 const viaBase = (url) => url.replace("https://data.ninjakiwi.com", BASE);
 
 async function get(url) {
-  const res = await fetch(url);
+  let res = await fetch(url);
+  if (res.status === 404 && url.startsWith(`${BASE}/`)) {
+    const directUrl = `${DIRECT_BASE}${url.slice(BASE.length)}`;
+    res = await fetch(directUrl);
+    url = directUrl;
+  }
   if (!res.ok) throw new Error(`Request failed (${res.status}) for ${url}`);
   const json = await res.json();
   if (json.success === false) throw new Error(json.error || "API returned an error");
