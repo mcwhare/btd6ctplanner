@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchEvents, fetchTiles, normalizeTiles } from "./api.js";
 import { placeTiles, toPixel, hexPoints, SIZE } from "./layout.js";
 import bannerImage from "./CTPointsBanner.webp";
+import { firebaseConfigured, setTileMarked, subscribeToMarks } from "./firebase.js";
 
 const relicAssets = import.meta.glob("./relics/*", { eager: true, query: "?url", import: "default" });
 const RELIC_SIZE = SIZE * 0.7;
@@ -50,6 +51,10 @@ const relicImageFor = (t) => relicImages[normalizeRelicName(t.relic)];
 const selectCls = "rounded-md border border-edge bg-panel px-2 py-1.5 text-ink";
 const btnCls = "cursor-pointer rounded-md border border-edge bg-panel px-2.5 py-1.5 hover:border-ink";
 const noticeCls = "mx-5 mt-3 border-l-[3px] bg-panel px-3 py-2.5 text-sm";
+const firebaseErrorMessage = (error, action) =>
+  error.code === "permission-denied" || error.message.includes("Missing or insufficient permissions")
+    ? `${action} Firebase data was denied. Deploy firestore.rules and confirm Firestore is enabled for project btd6ctillicus.`
+    : `${action}: ${error.message}`;
 
 // calc time
 const formatStart = (start) => {
@@ -66,12 +71,11 @@ export default function App() {
   const [tiles, setTiles] = useState([]);
   const [rawBody, setRawBody] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [markedTiles, setMarkedTiles] = useState(() => new Set());
+  const [markError, setMarkError] = useState("");
   const [tileSearch, setTileSearch] = useState("");
   const [gameFilter, setGameFilter] = useState("all");
   const [rotation, setRotation] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const drag = useRef(null);
-  const svgRef = useRef(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
 
@@ -95,6 +99,20 @@ export default function App() {
       .catch((e) => { setError(e.message); setStatus("error"); });
   }, [eventId]); // eslint-disable-line
 
+  useEffect(() => {
+    if (!eventId || !firebaseConfigured) {
+      setMarkedTiles(new Set());
+      return undefined;
+    }
+
+    setMarkError("");
+    return subscribeToMarks(
+      eventId,
+      setMarkedTiles,
+      (error) => setMarkError(firebaseErrorMessage(error, "Loading shared markings")),
+    );
+  }, [eventId]);
+
   const { placed, missing, empty } = useMemo(() => placeTiles(tiles), [tiles]);
   const games = useMemo(() => [...new Set(tiles.map((t) => t.gameType))].sort(), [tiles]);
 
@@ -116,22 +134,21 @@ export default function App() {
   const half = Math.max(1, ...drawn.map((t) => Math.hypot(t.x, t.y))) + SIZE + 8;
   const vb = `${-half} ${-half} ${half * 2} ${half * 2}`;
 
-  const angleAt = (e) => {
-    const b = svgRef.current.getBoundingClientRect();
-    return (Math.atan2(e.clientY - (b.top + b.height / 2), e.clientX - (b.left + b.width / 2)) * 180) / Math.PI;
+  const toggleMark = async (tileId) => {
+    try {
+      setMarkError("");
+      await setTileMarked(eventId, tileId, !markedTiles.has(tileId));
+    } catch (error) {
+      setMarkError(firebaseErrorMessage(error, "Saving shared marking"));
+    }
   };
-  const startDrag = (e) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { a0: angleAt(e), r0: rotation };
-    setDragging(true);
+  const spinCls = "transition-transform duration-300 ease-out motion-reduce:transition-none";
+  const clearSelectionOutsideMap = (e) => {
+    if (!e.target.closest("svg") && !e.target.closest("aside")) setSelected(null);
   };
-  const moveDrag = (e) => drag.current && setRotation(drag.current.r0 + angleAt(e) - drag.current.a0);
-  const endDrag = () => { drag.current = null; setDragging(false); };
-  // Animate button/slider turns, but follow the pointer exactly while dragging.
-  const spinCls = dragging ? "" : "transition-transform duration-300 ease-out motion-reduce:transition-none";
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col" onClick={clearSelectionOutsideMap}>
       <header className="flex flex-wrap items-end gap-x-6 gap-y-4 border-b border-line px-5 py-4">
         <h1 className="mr-auto font-display text-[32px] font-bold">Tilliticus Contested Territories</h1>
         <label className="flex flex-col gap-1 text-[13px] text-muted">
@@ -169,6 +186,7 @@ export default function App() {
           Couldn't load data: {error}. Check your connection and that the dev server proxy is running.
         </p>
       )}
+      {markError && <p className={`${noticeCls} border-start`}>{markError}</p>}
       {status === "empty" && <p className={`${noticeCls} border-banner`}>No Contested Territory events were returned.</p>}
       {tiles.length > 0 && (missing.length > 0 || empty.length > 0) && (
         <div className={`${noticeCls} border-banner space-y-1`}>
@@ -219,8 +237,8 @@ export default function App() {
           </div>
 
           <svg
-            ref={svgRef} viewBox={vb} role="img" aria-label="Contested Territory board"
-            className="aspect-square w-full touch-none rounded-xl bg-deep lg:aspect-auto lg:h-[calc(100vh-200px)]"
+            viewBox={vb} role="img" aria-label="Contested Territory board"
+            className="aspect-square w-full select-none rounded-xl bg-deep lg:aspect-auto lg:h-[calc(100vh-200px)]"
           >
             <defs>
               {drawn.map((t) => (
@@ -231,8 +249,8 @@ export default function App() {
             </defs>
             <rect
               x={-half} y={-half} width={half * 2} height={half * 2}
-              className={`fill-transparent ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
-              onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+              className="fill-transparent"
+              onClick={() => setSelected(null)}
             />
             <g className={spinCls} style={{ transform: `rotate(${rotation}deg)` }}>
               {drawn.map((t) => (
@@ -240,9 +258,10 @@ export default function App() {
                   key={t.id}
                   points={hexPoints(t.x, t.y)}
                   className={`${fillFor(t)} cursor-pointer transition-opacity duration-150 outline-none hover:stroke-ink focus:stroke-ink ${selected?.id === t.id ? "stroke-white stroke-[3]" : "stroke-deep stroke-[1.5]"
-                    } ${shown(t) ? "opacity-100" : "opacity-15"}`}
+                    } ${markedTiles.has(t.id) ? "stroke-start-red stroke-[3]" : ""} ${shown(t) ? "opacity-100" : "opacity-15"}`}
                   onClick={() => setSelected(t)}
-                  tabIndex={0}
+                    onDoubleClick={() => toggleMark(t.id)}
+                    tabIndex={0}
                   onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelected(t)}
                 >
                   <title>{`${t.id}: ${t.tileType} / ${t.gameType}`}</title>
@@ -303,6 +322,13 @@ export default function App() {
           {selected ? (
             <>
               <h2 className="mb-2.5 font-display text-[26px] font-bold">{selected.id}</h2>
+              <button
+                className={`${btnCls} mb-3 w-full ${markedTiles.has(selected.id) ? "border-yellow text-yellow" : ""}`}
+                disabled={!firebaseConfigured}
+                onClick={() => toggleMark(selected.id)}
+              >
+                {markedTiles.has(selected.id) ? "Remove shared mark" : "Mark tile"}
+              </button>
               <dl className="grid grid-cols-[auto_1fr] gap-x-3.5 gap-y-1.5">
                 <dt className="text-muted">Tile type</dt><dd>{selected.tileType}</dd>
                 <dt className="text-muted">Game mode</dt><dd>{selected.gameType}</dd>
