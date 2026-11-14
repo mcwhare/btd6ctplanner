@@ -69,7 +69,6 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [eventId, setEventId] = useState(null);
   const [tiles, setTiles] = useState([]);
-  const [rawBody, setRawBody] = useState(null);
   const [selected, setSelected] = useState(null);
   const [markedTiles, setMarkedTiles] = useState(() => new Set());
   const [markError, setMarkError] = useState("");
@@ -95,7 +94,7 @@ export default function App() {
     if (!event) return;
     setStatus("loading"); setSelected(null);
     fetchTiles(event)
-      .then((body) => { setRawBody(body); setTiles(normalizeTiles(body)); setStatus("ready"); })
+      .then((body) => { setTiles(normalizeTiles(body)); setStatus("ready"); })
       .catch((e) => { setError(e.message); setStatus("error"); });
   }, [eventId]); // eslint-disable-line
 
@@ -130,6 +129,9 @@ export default function App() {
   };
 
   const drawn = placed.map((t) => ({ ...t, ...toPixel(t.pos) }));
+  const markedTileList = tiles
+    .filter((tile) => markedTiles.has(tile.id))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
   // Square view centred on the middle tile, big enough for any rotation.
   const half = Math.max(1, ...drawn.map((t) => Math.hypot(t.x, t.y))) + SIZE + 8;
   const vb = `${-half} ${-half} ${half * 2} ${half * 2}`;
@@ -143,8 +145,12 @@ export default function App() {
     }
   };
   const spinCls = "transition-transform duration-300 ease-out motion-reduce:transition-none";
+  const clearTileFocus = () => {
+    setSelected(null);
+    setTileSearch("");
+  };
   const clearSelectionOutsideMap = (e) => {
-    if (!e.target.closest("svg") && !e.target.closest("aside")) setSelected(null);
+    if (!e.target.closest("svg") && !e.target.closest("aside")) clearTileFocus();
   };
 
   return (
@@ -210,7 +216,6 @@ export default function App() {
           events: events.length,
           eventKeys: event ? Object.keys(event) : null,
           eventTilesUrl: event?.tiles ?? null,
-          tilesResponseType: Array.isArray(rawBody) ? "array" : typeof rawBody,
           tilesReceived: tiles.length,
           tilesOnBoard: placed.length,
           sampleTile: tiles[0]?.raw ?? null,
@@ -250,7 +255,7 @@ export default function App() {
             <rect
               x={-half} y={-half} width={half * 2} height={half * 2}
               className="fill-transparent"
-              onClick={() => setSelected(null)}
+              onClick={clearTileFocus}
             />
             <g className={spinCls} style={{ transform: `rotate(${rotation}deg)` }}>
               {drawn.map((t) => (
@@ -318,30 +323,58 @@ export default function App() {
           </svg>
         </div>
 
-        <aside className="overflow-auto rounded-xl bg-panel p-4 lg:max-h-[calc(100vh-200px)]">
-          {selected ? (
-            <>
-              <h2 className="mb-2.5 font-display text-[26px] font-bold">{selected.id}</h2>
-              <button
-                className={`${btnCls} mb-3 w-full ${markedTiles.has(selected.id) ? "border-yellow text-yellow" : ""}`}
-                disabled={!firebaseConfigured}
-                onClick={() => toggleMark(selected.id)}
-              >
-                {markedTiles.has(selected.id) ? "Remove shared mark" : "Mark tile"}
-              </button>
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3.5 gap-y-1.5">
-                <dt className="text-muted">Tile type</dt><dd>{selected.tileType}</dd>
-                <dt className="text-muted">Game mode</dt><dd>{selected.gameType}</dd>
-                {selected.boss && (<><dt className="text-muted">Boss</dt><dd>{String(selected.boss)}</dd></>)}
-                {selected.relic && (<><dt className="text-muted">Relic</dt><dd>{String(selected.relic)}</dd></>)}
-              </dl>
-              <h3 className="mt-4 mb-1.5 font-display text-sm font-bold text-muted">Raw data</h3>
-              <pre className="overflow-auto rounded-md bg-deep p-2.5 text-xs">{JSON.stringify(selected.raw, null, 2)}</pre>
-            </>
-          ) : (
-            <p className="text-muted">Select a tile to see its details.</p>
-          )}
-        </aside>
+        <div className="flex flex-col gap-3 lg:max-h-[calc(100vh-200px)]">
+          <aside className="h-64 shrink-0 overflow-auto rounded-xl bg-panel p-5">
+            {selected ? (
+              <>
+                <h2 className="mb-2 font-display text-xl font-bold">{selected.tileType}</h2>
+                <button
+                  className={`${btnCls} mb-2 w-full ${markedTiles.has(selected.id) ? "border-yellow text-yellow" : ""}`}
+                  disabled={!firebaseConfigured}
+                  onClick={() => toggleMark(selected.id)}
+                >
+                  {markedTiles.has(selected.id) ? "Remove shared mark" : "Mark tile"}
+                </button>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                  <dt className="text-muted">Tile ID</dt><dd>{selected.id}</dd>
+                  <dt className="text-muted">Tile type</dt><dd>{selected.tileType}</dd>
+                  <dt className="text-muted">Game mode</dt><dd>{selected.gameType}</dd>
+                  {selected.boss && (<><dt className="text-muted">Boss</dt><dd>{String(selected.boss)}</dd></>)}
+                  {selected.relic && (<><dt className="text-muted">Relic</dt><dd>{String(selected.relic)}</dd></>)}
+                </dl>
+              </>
+            ) : (
+              <p className="text-sm text-muted">Select a tile to see its details.</p>
+            )}
+          </aside>
+
+          <aside className="min-h-0 overflow-auto rounded-xl bg-panel p-3" onClick={clearTileFocus}>
+            <h2 className="mb-2 font-display text-lg font-bold">Marked tiles</h2>
+            {markedTileList.length > 0 ? (
+              <ul className="space-y-1">
+                {markedTileList.map((tile) => (
+                  <li key={tile.id}>
+                    <button
+                      className={`w-full rounded-md border px-2.5 py-1.5 text-left text-muted text-sm hover:border-ink ${
+                        selected?.id === tile.id ? "border-start-red text-start-red" : "border-edge"
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTileSearch(tile.id);
+                        setSelected(tile);
+                      }}
+                    >
+                      <span>{tile.id}</span>
+                      <span className="ml-2 font-bold text-white">{tile.tileType}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">No tiles have been marked.</p>
+            )}
+          </aside>
+        </div>
       </main>
     </div>
   );
