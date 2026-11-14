@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchEvents, fetchTiles, normalizeTiles } from "./api.js";
 import { placeTiles, toPixel, hexPoints, SIZE } from "./layout.js";
 import bannerImage from "./CTPointsBanner.webp";
+import bauriceImage from "./baurice.webp";
 import { firebaseConfigured, setTileMarked, subscribeToMarks } from "./firebase.js";
 
 const relicAssets = import.meta.glob("./relics/*", { eager: true, query: "?url", import: "default" });
@@ -156,7 +157,10 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col" onClick={clearSelectionOutsideMap}>
       <header className="flex flex-wrap items-end gap-x-6 gap-y-4 border-b border-line px-5 py-4">
-        <h1 className="mr-auto font-display text-[32px] font-bold">Tilliticus Contested Territories</h1>
+        <h1 className="mr-auto flex items-center gap-3 font-display text-[32px] font-bold">
+          <img className="h-15 w-15 object-contain" src={bauriceImage} alt="" aria-hidden="true" />
+          <span>Tilliticus Contested Territories</span>
+        </h1>
         <label className="flex flex-col gap-1 text-[13px] text-muted">
           Event
           <select className={selectCls} value={eventId ?? ""} onChange={(e) => setEventId(e.target.value)}>
